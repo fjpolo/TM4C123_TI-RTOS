@@ -98,7 +98,7 @@ void main(void)
 //---------------------------------------------------------------------------
 // hardware_init()
 //
-// inits GPIO pins for toggling the LED
+// Clock and Timer2A setup
 //---------------------------------------------------------------------------
 void hardware_init(void)
 {
@@ -122,9 +122,9 @@ void hardware_init(void)
 
 
 //---------------------------------------------------------------------------
-// ledToggle()
+// filter()
 //
-// toggles LED on Tiva-C LaunchPad
+// Apply FIR Filters
 //---------------------------------------------------------------------------
 void filter(void)
 {
