@@ -1,9 +1,12 @@
 //---------------------------------------------------------------------------------
-// Project: Filter a signal using FIR Filters and a Circular Buffer with SWi
+// Project: Filter a signal using FIR Filters
 // Author: Franco Polo
 // Date: April 2018
 //
-// Note:
+// Note: A circular buffer is implemented to save data and use block processing. An
+//      ADC interrupt is simulated with Timer2A and the sample is taken from a signal
+//      made of two sines in Octave. The new sample is saved in the CB and then the
+//      filter task is posted, where LPF and HPF FIR filters are applied.
 //
 //----------------------------------------------------------------------------------
 
@@ -50,14 +53,14 @@ void filter(void);
 // fs = 5000Hz
 // Ts = 200uS
 const float sines[50] = { 0.00000,   0.96966,   1.15352,   0.49346,  -0.28876,
-                         -0.36327,   0.43586,   1.45506,   1.82662,   1.27295,
+                          -0.36327,   0.43586,   1.45506,   1.82662,   1.27295,
                           0.36327,  -0.01574,   0.51627,   1.47978,   1.98031,
                           1.53884,   0.53670,  -0.13796,   0.08597,   0.93324,
                           1.53884,   1.25227,   0.24279,  -0.65614,  -0.71899,
                           0.00000,   0.71899,   0.65614,  -0.24279,  -1.25227,
-                         -1.53884,  -0.93324,  -0.08597,   0.13796,  -0.53670,
-                         -1.53884,  -1.98031,  -1.47978,  -0.51627,   0.01574,
-                         -0.36327,  -1.27295,  -1.82662,  -1.45506,  -0.43586,
+                          -1.53884,  -0.93324,  -0.08597,   0.13796,  -0.53670,
+                          -1.53884,  -1.98031,  -1.47978,  -0.51627,   0.01574,
+                          -0.36327,  -1.27295,  -1.82662,  -1.45506,  -0.43586,
                           0.36327,   0.28876,  -0.49346,  -1.15352,  -0.96966};
 
 // LPF
@@ -75,7 +78,6 @@ const float hhpf[8] = {0.0735766,  -0.12732395,  0.17167874, -0.19672633,
 //---------------------------------------
 // Global variables
 //---------------------------------------
-//volatile int16_t i16ToggleCount = 0;
 int k = 0, pointer = 0, sine_index = 0;
 int output_index = 0;
 float y[50], y2[50], circular_buffer[nc];
@@ -86,9 +88,9 @@ float y[50], y2[50], circular_buffer[nc];
 void main(void)
 {
 
-   hardware_init();							// init hardware via Xware
+    hardware_init();							// init hardware via Xware
 
-   BIOS_start();
+    BIOS_start();
 
 }
 
@@ -100,29 +102,21 @@ void main(void)
 //---------------------------------------------------------------------------
 void hardware_init(void)
 {
-	uint32_t ui32Period;
+    uint32_t ui32Period;
 
-	//Set CPU Clock to 40MHz. 400MHz PLL/2 = 200 DIV 5 = 40MHz
-	SysCtlClockSet(SYSCTL_SYSDIV_5|SYSCTL_USE_PLL|SYSCTL_XTAL_16MHZ|SYSCTL_OSC_MAIN);
+    //Set CPU Clock to 40MHz. 400MHz PLL/2 = 200 DIV 5 = 40MHz
+    SysCtlClockSet(SYSCTL_SYSDIV_5|SYSCTL_USE_PLL|SYSCTL_XTAL_16MHZ|SYSCTL_OSC_MAIN);
 
-	// ADD Tiva-C GPIO setup - enables port, sets pins 1-3 (RGB) pins for output
-	SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
-	GPIOPinTypeGPIOOutput(GPIO_PORTF_BASE, GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_3);
+    // Timer 2 setup code
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER2);			// enable Timer 2 periph clks
+    TimerConfigure(TIMER2_BASE, TIMER_CFG_PERIODIC);		// cfg Timer 2 mode - periodic
 
-	// Turn on the LED
-	GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_3, 4);
+    ui32Period = (SysCtlClockGet()/8000);                   // Sample period (1/8kHz)
+    TimerLoadSet(TIMER2_BASE, TIMER_A, ui32Period);			// set Timer 2 period
 
-	// Timer 2 setup code
-	SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER2);			// enable Timer 2 periph clks
-	TimerConfigure(TIMER2_BASE, TIMER_CFG_PERIODIC);		// cfg Timer 2 mode - periodic
+    TimerIntEnable(TIMER2_BASE, TIMER_TIMA_TIMEOUT);		// enables Timer 2 to interrupt CPU
 
-	//ui32Period = (SysCtlClockGet() /2);						// period = CPU clk div 2 (500ms)
-    ui32Period = (SysCtlClockGet()/8000);
-	TimerLoadSet(TIMER2_BASE, TIMER_A, ui32Period);			// set Timer 2 period
-
-	TimerIntEnable(TIMER2_BASE, TIMER_TIMA_TIMEOUT);		// enables Timer 2 to interrupt CPU
-
-	TimerEnable(TIMER2_BASE, TIMER_A);						// enable Timer 2
+    TimerEnable(TIMER2_BASE, TIMER_A);						// enable Timer 2
 
 }
 
@@ -134,8 +128,6 @@ void hardware_init(void)
 //---------------------------------------------------------------------------
 void filter(void)
 {
-    //TimerIntClear(TIMER2_BASE, TIMER_TIMA_TIMEOUT);			// must clear timer flag FROM timer
-    //
     // Filter
     y[output_index] = 0;
     for(k=0;k < nc; k++){
@@ -160,11 +152,11 @@ void Timer_ISR(void)
 {
     TimerIntClear(TIMER2_BASE, TIMER_TIMA_TIMEOUT);
     // Insert the newest sample into an N-sample circular buffer
-        // The oldest sample in the circular buffer is overwritten.
-        circular_buffer[pointer] = sines[sine_index];
-        // Increment sine index
-        if(sine_index == 49) sine_index = 0;
-        else sine_index++;
-        // Post filter SWi
-        Swi_post(FIRSwi);
+    // The oldest sample in the circular buffer is overwritten.
+    circular_buffer[pointer] = sines[sine_index];
+    // Increment sine index
+    if(sine_index == 49) sine_index = 0;
+    else sine_index++;
+    // Post filter SWi
+    Swi_post(FIRSwi);
 }
